@@ -1,0 +1,52 @@
+From 86cd793519dc31147df5b1c27cb8aca0ae5b7fec Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Mon, 16 Oct 2023 20:11:36 +0200
+Subject: [PATCH] handle & in sh commands
+
+---
+ usr/src/sh.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/usr/src/sh.c b/usr/src/sh.c
+index 3569113..7e0848a 100644
+--- a/usr/src/sh.c
++++ b/usr/src/sh.c
+@@ -53,7 +53,7 @@ void parse_token(char *str) {
+  * Process the command with the different tokens
+  */
+ void process_cmd(void) {
+-	int i, pid_child, arg_pos;
++	int i, pid_child, arg_pos, background;
+ 	char *argv[ARGS_MAX];
+ 	char filename[30];
+ 	int pid, sig;
+@@ -133,7 +133,13 @@ void process_cmd(void) {
+ 
+ 	/* Prepare the arguments to be passed to exec() syscall */
+ 	arg_pos = 0;
++	background = 0;
+ 	while (tokens[arg_pos][0] != 0) {
++		if (strcmp(tokens[arg_pos], "&") == 0) {
++			background = 1;
++			break;
++		}
++
+ 		argv[arg_pos] = tokens[arg_pos];
+ 		arg_pos++;
+ 	}
+@@ -156,7 +162,11 @@ void process_cmd(void) {
+ 
+ 	} else { /* Execution in the parent */
+ 
+-		waitpid(pid_child, NULL, 0);
++		if (!background) {
++			waitpid(pid_child, NULL, 0);
++		} else {
++			printf("[%d]\n", pid_child);
++		}
+ 	}
+ }
+ 
+-- 
+2.42.0
+

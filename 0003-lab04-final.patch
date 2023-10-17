@@ -1,0 +1,203 @@
+From 6cc555f2cb2b9b417787a70211d75af1175d6023 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Mon, 9 Oct 2023 20:31:17 +0200
+Subject: [PATCH] =?UTF-8?q?impl=C3=A9mentation=20fork2?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ rapport.md                     | 23 ++++++++++++
+ so3/include/process.h          |  1 +
+ so3/include/syscall.h          |  2 ++
+ so3/kernel/process.c           | 66 ++++++++++++++++++++++++++++++++++
+ so3/kernel/syscalls.c          |  4 +++
+ usr/lib/libc/crt0.S            |  1 +
+ usr/lib/libc/include/syscall.h |  6 ++++
+ 7 files changed, 103 insertions(+)
+
+diff --git a/rapport.md b/rapport.md
+index e69de29..c852a21 100644
+--- a/rapport.md
++++ b/rapport.md
+@@ -0,0 +1,23 @@
++> Dans le fichier rapport.md, expliquez à quoi servent les différents ajouts effectués dans les
++> fichiers modifiés et le cheminement complet pour ajouter un appel système.
++
++**so3/include/syscall.h**: On doit rajouter en première étape le numéro unique pour le syscall.
++
++**so3/include/process.h**: On doit définir l'en-tête de la méthode du kernel qui effectuera le fork 
++
++**so3/kernel/process.c**: Implémentation de le méthode kernel qui applique les actions nécessaires pour le fork 
++                          (copie process, réservation mémoire, notification irq, ...). On rajoute le print dedans. 
++
++**so3/kernel/syscalls.c**: Le code userland appelle une méthode unique du kernel pour execétuer des syscalls, on doit
++                           alors ajouter la gestion de l'appel de la méthode interne dans cette méthode.
++
++**usr/lib/libc/include/syscall.h**: définition côté userland de l'appel au syscall fork2
++
++**usr/lib/libc/crt0.S**: définition de l'appel assembleur nécessaire côté userland pour appeler la méthode du kernel
++                         qui gère les syscalls
++
++Depuis un programme en userland un syscall fera donc appel à la méthode `sys_fork2()` définie dans la libc de SO3.
++La libc fera donc appel à la méthode du kernel via une méthode assembleur, reçue par le kernel par la méthode `syscall_handle`
++défine dans `syscall.h` et `syscalls.c`.
++Le kernel traitera ensuite le code d'opération reçu pour exécuter la bonne méthode, en l'occurrence `do_fork2` définie
++dans `process.h` et `process.c`.
+\ No newline at end of file
+diff --git a/so3/include/process.h b/so3/include/process.h
+index dd9d656..8a814dc 100644
+--- a/so3/include/process.h
++++ b/so3/include/process.h
+@@ -138,6 +138,7 @@ uint32_t do_getpid(void);
+ 
+ int do_execve(const char *filename, char **argv, char **envp);
+ int do_fork(void);
++int do_fork2(void);
+ void do_exit(int exit_status);
+ int do_waitpid(int pid, uint32_t *wstatus, uint32_t options);
+ 
+diff --git a/so3/include/syscall.h b/so3/include/syscall.h
+index 3370872..4d28ee4 100644
+--- a/so3/include/syscall.h
++++ b/so3/include/syscall.h
+@@ -50,6 +50,8 @@
+ #define SYSCALL_DUP		22
+ #define SYSCALL_DUP2		23
+ 
++#define SYSCALL_FORK2 		24
++
+ #define SYSCALL_SOCKET 		26
+ #define SYSCALL_BIND		27
+ #define SYSCALL_LISTEN		28
+diff --git a/so3/kernel/process.c b/so3/kernel/process.c
+index 0288cdf..fdbc989 100644
+--- a/so3/kernel/process.c
++++ b/so3/kernel/process.c
+@@ -840,6 +840,72 @@ int do_fork(void)
+ 	return newp->pid;
+ }
+ 
++/*
++ * For a new process from the current running process.
++ */
++int do_fork2(void) {
++	pcb_t *newp, *parent;
++	unsigned long flags;
++
++	flags = local_irq_save();
++
++	parent = current()->pcb;
++
++	/* For the time being, we *only* authorize to fork() from the main thread */
++	if (current() != parent->main_thread) {
++		printk("%s: forking from a thread other than the main thread is not allowed so far ...\n", __func__);
++		return -1;
++	}
++
++	/* Duplicate the elements of the parent process into the child */
++	newp = duplicate_process(parent);
++
++	/* Copy the user space area of the parent process */
++	duplicate_user_space(parent, newp);
++
++	/* At the moment, we spawn the main_thread only in the child. In the future, we will have to create a thread for each existing threads
++	 * in the parent process.
++	 */
++	sprintf(newp->name, "%s_child_%d", parent->name, newp->pid);
++
++	newp->main_thread = user_thread(NULL, newp->name, (void *) arch_get_args_base(), newp);
++
++	/* Copy the kernel stack of the main thread */
++	memcpy((void *) get_kernel_stack_top(newp->main_thread->stack_slotID) - THREAD_STACK_SIZE,
++	       (void *) get_kernel_stack_top(parent->main_thread->stack_slotID) - THREAD_STACK_SIZE, THREAD_STACK_SIZE);
++
++	/*
++	 * Preserve the current value of all registers concerned by this execution so that
++	 * the new thread will be able to pursue its execution once scheduled.
++	 */
++
++	__save_context(newp->main_thread, get_kernel_stack_top(newp->main_thread->stack_slotID));
++
++	/* The main process thread is ready to be scheduled for its execution.*/
++	newp->state = PROC_STATE_READY;
++	
++	BUG_ON(!local_irq_is_disabled());
++
++	/* Prepare to perform scheduling to check if a context switch is required. */
++	raise_softirq(SCHEDULE_SOFTIRQ);
++
++	local_irq_restore(flags);
++
++	// print the message
++	printk(
++		"fork2(): process test_fork2.elf "
++		"with pid %d forked to child with pid %d\n",
++		parent->pid,
++		newp->pid
++	);
++
++	/* Return the PID of the child process. The child will do not execute this code, since
++	 * it jumps to the ret_from_fork in context.S
++	 */
++
++	return newp->pid;
++}
++
+ /*
+  * Terminates a process.
+  * All allocated resources should be released except its PCB which still contains the exit code.
+diff --git a/so3/kernel/syscalls.c b/so3/kernel/syscalls.c
+index 03c6a06..3e3a43a 100644
+--- a/so3/kernel/syscalls.c
++++ b/so3/kernel/syscalls.c
+@@ -112,6 +112,10 @@ long syscall_handle(unsigned long r0, unsigned long r1, unsigned long r2, unsign
+ 			result = do_fork();
+ 			break;
+ 
++		case SYSCALL_FORK2:
++			result = do_fork2();
++			break;
++
+ 		case SYSCALL_WAITPID:
+ 			result = do_waitpid(r0, (uint32_t *) r1, r2);
+ 			break;
+diff --git a/usr/lib/libc/crt0.S b/usr/lib/libc/crt0.S
+index fc15eb0..9ffad66 100755
+--- a/usr/lib/libc/crt0.S
++++ b/usr/lib/libc/crt0.S
+@@ -120,6 +120,7 @@ SYSCALLSTUB sys_execve,			syscallExecve
+ SYSCALLSTUB sys_waitpid,		syscallWaitpid
+ SYSCALLSTUB sys_pause, 			syscallPause
+ SYSCALLSTUB sys_fork, 			syscallFork
++SYSCALLSTUB sys_fork2, 			syscallFork2
+ SYSCALLSTUB sys_readdir, 		syscallReaddir
+ SYSCALLSTUB sys_chdir, 			syscallChdir
+ SYSCALLSTUB sys_getcwd, 		syscallGetcwd
+diff --git a/usr/lib/libc/include/syscall.h b/usr/lib/libc/include/syscall.h
+index 651c4bc..8d65b87 100644
+--- a/usr/lib/libc/include/syscall.h
++++ b/usr/lib/libc/include/syscall.h
+@@ -34,6 +34,7 @@
+ #define syscallWrite			5
+ #define syscallPause			6
+ #define syscallFork	 		7
++#define syscallFork2	 		24
+ #define syscallPtrace			8
+ #define syscallReaddir			9
+ #define syscallChdir			10
+@@ -201,6 +202,11 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem);
+  */
+ int sys_fork(void);
+ 
++/**
++ * Fork a new process according to the standard UNIX fork system call.
++ */
++int sys_fork2(void);
++
+ /**
+  * creat() is equivalent to open() with flags equal to O_CREAT|O_WRONLY|O_TRUNC
+  */
+-- 
+2.42.0
+

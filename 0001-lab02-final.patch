@@ -1,0 +1,140 @@
+From ff5b58e659918bd04371b4eccfdba4bd414face4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Fri, 29 Sep 2023 23:59:00 +0200
+Subject: [PATCH] lab02 final
+
+---
+ .vscode/launch.json    |  4 ++--
+ so3/kernel/main.c      | 14 --------------
+ usr/src/CMakeLists.txt |  3 ++-
+ usr/src/hello.c        | 19 +++++++++++++++++++
+ usr/src/sh.c           |  5 -----
+ 5 files changed, 23 insertions(+), 22 deletions(-)
+ create mode 100644 usr/src/hello.c
+
+diff --git a/.vscode/launch.json b/.vscode/launch.json
+index 3c505b2..ebcc0f0 100755
+--- a/.vscode/launch.json
++++ b/.vscode/launch.json
+@@ -8,7 +8,7 @@
+             "name": "QEMU Debug SO3",
+             "type": "cppdbg",
+             "request": "launch",
+-            "miDebuggerPath": "/opt/toolchains/arm-linux-gnueabihf_6.4.1/bin/arm-linux-gnueabihf-gdb",
++            "miDebuggerPath": "/usr/bin/arm-linux-gnueabihf-gdb",
+             "miDebuggerServerAddress": "localhost:1234",
+             "program": "${workspaceFolder}/so3/so3",
+             "MIMode": "gdb",
+@@ -26,7 +26,7 @@
+             "name": "QEMU Debug USR",
+             "type": "cppdbg",
+             "request": "launch",
+-            "miDebuggerPath": "/opt/toolchains/arm-linux-gnueabihf_6.4.1/bin/arm-linux-gnueabihf-gdb",
++            "miDebuggerPath": "/usr/bin/arm-linux-gnueabihf-gdb",
+             "miDebuggerServerAddress": "localhost:1234",
+             "program": "${workspaceFolder}/usr/build/deploy/${input:debugFileName}.elf",
+             "MIMode": "gdb",
+diff --git a/so3/kernel/main.c b/so3/kernel/main.c
+index b0b72e0..5d8432f 100644
+--- a/so3/kernel/main.c
++++ b/so3/kernel/main.c
+@@ -94,18 +94,6 @@ void *rest_init(void *dummy) {
+ 	return NULL;
+ }
+ 
+-/*
+- * Humm, something useful for us?
+- */
+-void hidden_init(void) {
+-	volatile int *ptr = NULL;
+-
+-	*ptr = 0xbeef;
+-
+-    /* Ok, now you should know what to remove... */
+-}
+-
+-
+ void kernel_start(void) {
+ 
+ 	lprintk("%s", SO3_BANNER);
+@@ -134,8 +122,6 @@ void kernel_start(void) {
+ 
+ 	calibrate_delay();
+ 
+-	hidden_init();
+-
+ 	/*
+ 	 * Perform the rest of bootstrap sequence in a separate thread, so that
+ 	 * we can rely on the scheduler for subsequent threads.
+diff --git a/usr/src/CMakeLists.txt b/usr/src/CMakeLists.txt
+index 783c34a..59da46d 100644
+--- a/usr/src/CMakeLists.txt
++++ b/usr/src/CMakeLists.txt
+@@ -3,11 +3,12 @@ add_executable(sh.elf sh.c)
+ add_executable(ls.elf ls.c)
+ add_executable(echo.elf echo.c)
+ add_executable(cat.elf cat.c)
++add_executable(hello.elf hello.c)
+ 
+ 
+ target_link_libraries(sh.elf c)
+ target_link_libraries(ls.elf c)
+ target_link_libraries(echo.elf c)
+ target_link_libraries(cat.elf c)
+-
++target_link_libraries(hello.elf c)
+ 
+diff --git a/usr/src/hello.c b/usr/src/hello.c
+new file mode 100644
+index 0000000..3436c22
+--- /dev/null
++++ b/usr/src/hello.c
+@@ -0,0 +1,19 @@
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++
++int main(int argc, char *argv[]) {
++    char msg[] = "Hello world !";
++    printf("%s\n", msg);
++    printf("%p\n", msg);
++
++    const unsigned ADR = 0xbffcef24;
++    const unsigned STR_SIZE = sizeof(msg) / sizeof(char);
++
++    for (unsigned i = 0; i < STR_SIZE; ++i){
++        (*(char *)(ADR + i))++;
++    }
++    printf("%s\n", msg);
++
++    return 0;
++}
+\ No newline at end of file
+diff --git a/usr/src/sh.c b/usr/src/sh.c
+index 4f834a8..1b2a0eb 100644
+--- a/usr/src/sh.c
++++ b/usr/src/sh.c
+@@ -178,7 +178,6 @@ void main(int argc, char *argv[])
+ 	char user_input[80];
+ 	int i;
+ 	struct sigaction sa;
+-	int *ptr = NULL;
+ 
+ 	memset(&sa, 0, sizeof(struct sigaction));
+ 
+@@ -198,12 +197,8 @@ void main(int argc, char *argv[])
+ 		if (strcmp(user_input, ""))
+ 			parse_token(user_input);
+ 
+-		*ptr = 0xdeadbeef;
+-
+ 		/* Check if there is at least one token to be processed */
+ 		if (tokens[0][0] != 0)
+ 			process_cmd();
+-
+-
+ 	}
+ }
+-- 
+2.42.0
+
