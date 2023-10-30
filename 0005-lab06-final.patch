@@ -1,0 +1,106 @@
+From ca861290fdbf37b369f66c42a308dc8864cc4051 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Mon, 30 Oct 2023 20:19:07 +0100
+Subject: [PATCH] feat: implement lab06
+
+---
+ usr/host/threads.c | 71 +++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 60 insertions(+), 11 deletions(-)
+
+diff --git a/usr/host/threads.c b/usr/host/threads.c
+index 07cdd3c..f520aac 100644
+--- a/usr/host/threads.c
++++ b/usr/host/threads.c
+@@ -23,10 +23,22 @@ typedef struct  {
+ /**
+  * @brief Threads function used to count the letters occurence in a text
+  */
+-void *count_letters(void * args) {
+-	count_param_t *params = (count_param_t *) args;
+-	
+-	//TO COMPLETE: Count each letter's number of occurences in the part of the text assigned to this thread. Processing must be case-insensitive ('A' and 'a' both count as an occurence of A). Store the results in the given argument structure 
++void *count_letters(void *args)
++{
++	count_param_t *params = (count_param_t *)args;
++
++	for (int i = 0; i < LETTERS_NB; i++)
++		params->counters[i] = 0;
++
++	// Count each letter's number of occurences in the part of the text assigned to this thread.
++	// Processing must be case-insensitive ('A' and 'a' both count as an occurence of A).
++	// Store the results in the given argument structure.
++	for (size_t i = 0; i < params->size; ++i)
++	{
++		char c = params->text_pointer[i];
++		if (isalpha(c))
++			++params->counters[c >= A_LOWER_OFFSET ? c - A_LOWER_OFFSET : c - A_UPPER_OFFSET];
++	}
+ 
+ 	return NULL;
+ }
+@@ -125,18 +137,55 @@ int main(int argc, char **argv)
+ 		printf("Error: The number of threads must be between 0 and 15");
+ 		return EXIT_FAILURE;
+ 	}
+-    // TO COMPLETE: Load the text and its size
+ 
+-    // TO COMPLETE: Configure and launch threads
++	// Load the text and its size
++	char *text = buffer_from_file(filename);
++	size_t text_size = strlen(text);
++
++	// Configure and launch threads
++	pthread_t *threads = malloc(thread_num * sizeof(pthread_t));
++	count_param_t *params = malloc(thread_num * sizeof(count_param_t));
+ 
+-    // TO COMPLETE: Join the threads and compile the results
++	size_t chunk_size = text_size / thread_num;
++	size_t remainder = text_size % thread_num;
+ 
+-    /* Display results */
+-	for (int i = 0; i < LETTERS_NB; ++i) {
+-		printf("Number of %c: %d\n", (char)(i+A_LOWER_OFFSET), result_counters[i]);
++	for (int i = 0; i < thread_num; ++i)
++	{
++		params[i].text_pointer = text + i * chunk_size;
++		params[i].size = chunk_size + (i == thread_num - 1 ? remainder : 0);
++
++		if (pthread_create(&threads[i], NULL, count_letters, &params[i]) != 0)
++		{
++			fprintf(stderr, "Error: pthread_create() failed\n");
++			return EXIT_FAILURE;
++		}
++	}
++
++	// Join the threads and compile the results
++	for (int i = 0; i < thread_num; i++)
++	{
++		if (pthread_join(threads[i], NULL) != 0)
++		{
++			fprintf(stderr, "Error: pthread_join() failed\n");
++			return EXIT_FAILURE;
++		}
++
++		for (int j = 0; j < LETTERS_NB; j++)
++		{
++			result_counters[j] += params[i].counters[j];
++		}
++	}
++
++	// Display results
++	for (int i = 0; i < LETTERS_NB; ++i)
++	{
++		printf("Number of %c: %d\n", (char)(i + A_LOWER_OFFSET), result_counters[i]);
+ 	}
+ 
+-	// TO COMPLETE: Free allocated memory
++	// Free allocated memory
++	free(text);
++	free(threads);
++	free(params);
+ 
+ 	return EXIT_SUCCESS;
+ }
+-- 
+2.42.0
+
