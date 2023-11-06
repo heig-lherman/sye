@@ -1,0 +1,115 @@
+From 235cf533d50ccd069bf1e2bb3cb880674b0729a6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Thu, 2 Nov 2023 14:18:32 +0100
+Subject: [PATCH] feat: impl pipe
+
+---
+ usr/src/sh.c | 82 +++++++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 68 insertions(+), 14 deletions(-)
+
+diff --git a/usr/src/sh.c b/usr/src/sh.c
+index 3569113..518fa45 100644
+--- a/usr/src/sh.c
++++ b/usr/src/sh.c
+@@ -132,30 +132,84 @@ void process_cmd(void) {
+ 	/* General case - prepare to launch the application */
+ 
+ 	/* Prepare the arguments to be passed to exec() syscall */
++	int in_pipe, arg2_pos, pid_pipe;
++	char *argv2[ARGS_MAX];
++	int pipe_fd[2];
++	int res;
++	in_pipe = 0;
+ 	arg_pos = 0;
++	arg2_pos = 0;
++
+ 	while (tokens[arg_pos][0] != 0) {
+-		argv[arg_pos] = tokens[arg_pos];
+-		arg_pos++;
++		if (!in_pipe && !strcmp(tokens[arg_pos], "|")) {
++			in_pipe = 1;
++			argv[arg_pos] = NULL;
++		} else {
++			if (in_pipe) {
++				argv2[arg2_pos] = tokens[arg_pos];
++				++arg2_pos;
++			} else {
++				argv[arg_pos] = tokens[arg_pos];
++			}
++		}
++
++		++arg_pos;
+ 	}
++
+ 	/* Terminate the list of args properly */
+-	argv[arg_pos] = NULL;
++	if (in_pipe)
++		argv2[arg2_pos] = NULL;
++	else
++		argv[arg_pos] = NULL;
+ 
+ 	pid_child = fork();
+-	if (!pid_child) { /* Execution in the child */
++	if (!pid_child) { // Execution in the child
++		if (in_pipe) {
++			if (pipe(pipe_fd) == -1) {
++				printf("pipe failed.\n");
++				exit(-1);
++			}
+ 
+-		strcpy(filename, tokens[0]);
+-		argv[0] = tokens[0];
++			pid_pipe = fork();
++
++			if (!pid_pipe) { // execution of the first child
++				close(pipe_fd[0]);
++				dup2(pipe_fd[1], STDOUT_FILENO);
++				strcpy(filename, argv[0]);
++				strcat(filename, ".elf");
++
++				res = execv(filename, argv);
++				close(pipe_fd[1]);
++				if (res == -1) {
++					printf("%s: exec failed.\n", argv[0]);
++					exit(-1);
++				}
++			} else { // execution of the pipe
++				close(pipe_fd[1]);
++				dup2(pipe_fd[0], STDIN_FILENO);
++				strcpy(filename, argv2[0]);
++				strcat(filename, ".elf");
++
++				res = execv(filename, argv2);
++				close(pipe_fd[0]);
++				if (res == -1) {
++					printf("%s: exec failed.\n", argv2[0]);
++					exit(-1);
++				}
++			}
++		} else {
++			strcpy(filename, tokens[0]);
++			argv[0] = tokens[0];
+ 
+-		/* We are looking for an executable with .elf extension */
+-		strcat(filename, ".elf");
++			/* We are looking for an executable with .elf extension */
++			strcat(filename, ".elf");
+ 
+-		if (execv(filename, argv) == -1) {
+-			printf("%s: exec failed.\n", argv[0]);
+-			exit(-1);
++			if (execv(filename, argv) == -1) {
++				printf("%s: exec failed.\n", argv[0]);
++				exit(-1);
++			}
+ 		}
+-
+-	} else { /* Execution in the parent */
+-
++	} else { // Execution in the parent
+ 		waitpid(pid_child, NULL, 0);
+ 	}
+ }
+-- 
+2.42.0
+
