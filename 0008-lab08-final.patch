@@ -1,0 +1,397 @@
+From 291d3675b880090623854d24fb73108e4ab536a4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Mon, 20 Nov 2023 23:07:21 +0100
+Subject: [PATCH] feat: impl battleships
+
+---
+ usr/host/battleship.c | 292 +++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 257 insertions(+), 35 deletions(-)
+
+diff --git a/usr/host/battleship.c b/usr/host/battleship.c
+index a7d05e6..d00c55f 100755
+--- a/usr/host/battleship.c
++++ b/usr/host/battleship.c
+@@ -10,13 +10,11 @@
+ 
+ int forfeit = 0, sock_fd;
+ 
+-typedef enum
+-{
++typedef enum {
+ 	DEFAULT = 0, BOAT, MISSED_SHOT, SUNKEN_BOAT
+-}gridState;
++} gridState;
+ 
+-typedef enum
+-{
++typedef enum {
+ 	SERVER_LISTEN = 0, 
+ 	SERVER_CLIENT_CONNECT,
+ 	CLIENT_CONNECTING,
+@@ -37,7 +35,7 @@ typedef enum
+ 	INV_BOAT_STACK,
+ 	USER_FORFEIT,
+ 	OPPONENT_FORFEIT
+-}stringsIdx;
++} stringsIdx;
+ 
+ const char *strings[] = {
+ 	"Server listening on port",
+@@ -70,9 +68,20 @@ const char *strings[] = {
+ */
+ void quitGame(int sig)
+ {
+-	if(sig == SIGTSTP)
+-	{
+-		// TO COMPLETE: step 2
++	if (sig == SIGTSTP) {
++		if (forfeit) {
++			// in the really weird case where the opponent forfeited right before we did...
++			close(sock_fd);
++			printf("%s: %s\n", strings[OPPONENT_FORFEIT], strings[USER_WON]);
++			exit(0);
++			return;
++		}
++
++		char data = OPPONENT_FORFEIT;
++		socketSend(sock_fd, &data, 1);
++		close(sock_fd);
++		printf("%s: %s\n", strings[USER_FORFEIT], strings[USER_LOST]);
++		exit(0);
+ 	}
+ }
+ 
+@@ -105,8 +114,18 @@ int charToHex(const int digit)
+ char promptCell()
+ {
+ 	char userInput = 0;
+-	// TO COMPLETE
++    do {
++        userInput = getchar();
++        while (getchar() != '\n');
++        if (userInput == '\n') {
++            continue;
++        }
+ 
++        userInput = charToHex(userInput);
++		if (userInput < 0) {
++			printf("%s\n", strings[INV_CELL_VAL]);
++		}
++    } while (userInput < 0);
+ 	return userInput;
+ }
+ 
+@@ -127,7 +146,11 @@ char promptCell()
+ void printBoard(const char *grid)
+ {
+ 	const char symbols[] = "~0oX";
+-	// TO COMPLETE
++	
++	for (size_t i = 0; i < 16; i++) {
++		printf("%c ", symbols[grid[i]]);
++		if(i % 4 == 3) printf("\n");
++	}
+ }
+ 
+ /**
+@@ -137,8 +160,16 @@ void printBoard(const char *grid)
+ */
+ int socketRecv(const int sock_fd, char *buf, const size_t size)
+ {
+-	// TO COMPLETE
+-	
++	size_t i = 0;
++	while(i < size) {
++		int res = read(sock_fd, buf + i, size - i);
++		if (res < 0) {
++			return -1;
++		}
++		
++		i += res;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -149,7 +180,17 @@ int socketRecv(const int sock_fd, char *buf, const size_t size)
+ */
+ int socketSend(const int sock_fd, char *buf, const size_t size)
+ {
+-	// TO COMPLETE
++	size_t i = 0;
++	while(i < size) {
++		int res = write(sock_fd, buf + i, size - i);
++		if (res < 0) {
++			return -1;
++		}
++		
++		i += res;
++	}
++
++	return 0;
+ }
+ 
+ /**
+@@ -161,9 +202,41 @@ int socketSend(const int sock_fd, char *buf, const size_t size)
+ */
+ int server_create(const int port)
+ {
+-	// TO COMPLETE
++	int listenfd = 0, connfd = 0;
++	struct sockaddr_in serv_addr;
+ 
+-	return 0;
++	listenfd = socket(AF_INET, SOCK_STREAM, 0);
++	if (listenfd < 0) {
++		return -1;
++	}
++
++	memset(&serv_addr, 0, sizeof(serv_addr));
++	serv_addr = (struct sockaddr_in) {
++		.sin_family = AF_INET,
++		.sin_addr.s_addr = htonl(INADDR_ANY),
++		.sin_port = htons(port),
++	};
++
++	if (bind(listenfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
++		close(listenfd);
++		return -1;
++	}
++
++	if (listen(listenfd, 1) < 0) {
++		close(listenfd);
++		return -1;
++	}
++
++	printf("%s %d...\n", strings[SERVER_LISTEN], port);
++	connfd = accept(listenfd, (struct sockaddr *) NULL, NULL);
++	if (connfd < 0) {
++		close(listenfd);
++		return -1;
++	}
++
++	close(listenfd);
++	printf("%s\n", strings[SERVER_CLIENT_CONNECT]);
++	return connfd;
+ }
+ 
+ /**
+@@ -173,9 +246,31 @@ int server_create(const int port)
+ */
+ int client_connect(const char *ip_addr, const int port)
+ {
+-	// TO COMPLETE
++	int sockfd = 0;
++	struct sockaddr_in serv_addr;
+ 
+-	return 0;
++	sockfd = socket(AF_INET, SOCK_STREAM, 0);
++	if (sockfd < 0) {
++		return -1;
++	}
++
++	memset(&serv_addr, 0, sizeof(serv_addr));
++	serv_addr = (struct sockaddr_in) {
++		.sin_family = AF_INET,
++		.sin_port = htons(port),
++	};
++
++	if (inet_pton(AF_INET, ip_addr, &serv_addr.sin_addr) <= 0) {
++		return -1;
++	}
++
++	printf("%s %s:%d...\n", strings[CLIENT_CONNECTING], ip_addr, port);
++	if (connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
++		return -1;
++	}
++
++	printf("%s\n", strings[CLIENT_CONNECTED]);
++	return sockfd;
+ }
+ 
+ int main(int argc, char const *argv[])
+@@ -206,37 +301,164 @@ int main(int argc, char const *argv[])
+ 		}
+ 	}
+ 
+-	// TO COMPLETE: Init game boards and ask user for boat placement
+-	
+-	
+-	// TO COMPLETE: Print board
++	// Init game boards and ask user for boat placement
++	for (size_t i = 0; i < 16; i++) {
++		userGrid[i] = DEFAULT;
++		advGrid[i] = DEFAULT;
++	}
+ 	
++	printf("%s\n", strings[BOAT_PLACE]);
++	for (size_t i = 0; i < 3; i++) {
++		userInput = promptCell();
++		if(userGrid[userInput] == BOAT) {
++			printf("%s\n", strings[INV_BOAT_STACK]);
++			i--;
++		} else {
++			userGrid[userInput] = BOAT;
++		}
++	}
+ 
+-	// TO COMPLETE: Init socket communication according to role
+-	
++	// Print board
++	printf("%s\n", strings[USER_GRID]);
++	printBoard(userGrid);	
+ 
+-	// TO COMPLETE (part 2): Setup signal handler for forfeit
++	// Init socket communication according to role
++	if (server) {
++		fd = server_create(port);
++		if(fd < 0) {
++			perror("Error creating server");
++			return EXIT_FAILURE;
++		}
++	} else {
++		fd = client_connect(ip_addr, port);
++		if(fd < 0) {
++			perror("Error connecting to server");
++			return EXIT_FAILURE;
++		}
++	}
+ 	
++	// Setup signal handler for forfeit
++	sock_fd = fd;
++	signal(SIGTSTP, quitGame);
+ 	
+ 	// Run game according to role
+ 	int userBoats = 3, advBoats = 3;
+ 	char data = 0;
+ 	int validInput = 0;
+ 	char usrInput = 0;
+-	int firstIter = 1;
+-	while(1)
+-	{
+-		// TO COMPLETE
+-		
+-	}
++	int firstIter = server ? 1 : 0;
++	while (1) {
++		validInput = 0;
+ 
+-	// TO COMPLETE (part 2): Check forfeit (out of game loop without all user or opponent's boats destroyed)
++		// Send attack
++		if (firstIter) {
++			printf("%s\n", strings[ATTACK_CELL]);
++			while (!validInput) {
++				usrInput = promptCell();
+ 
++				// Check if the cell has already been attacked
++				if (advGrid[usrInput] != DEFAULT) {
++					printf("%s\n", strings[INV_CELL_ATTACKED]);
++					continue;
++				}
+ 
+-	// TO COMPLETE: Close socket file descriptor
+-	
++				validInput = 1;
++			}
+ 
+-	return 0;
++			// Send attack
++			data = usrInput;
++			if (socketSend(fd, &data, 1) < 0) {
++				printf("Error sending data\n");
++				break;
++			}
++
++			// Receive attack result
++			if (socketRecv(fd, &data, 1) < 0) {
++				printf("Error receiving data\n");
++				break;
++			}
++
++			// Update user grid
++			if (data == HIT) {
++				printf("%s %X: %s\n", strings[USER_ATTACK], usrInput, strings[HIT]);
++				advGrid[usrInput] = SUNKEN_BOAT;
++				advBoats--;
++			} else if (data == MISS) {
++				printf("%s %X: %s\n", strings[USER_ATTACK], usrInput, strings[MISS]);
++				advGrid[usrInput] = MISSED_SHOT;
++			} else if (data == OPPONENT_FORFEIT) {
++				forfeit = 1;
++				break;
++			}
++
++			// Print board
++			printf("%s\n", strings[OPPONENT_GRID]);
++			printBoard(advGrid);
++
++			firstIter = 0;
++		} else {
++			printf("%s\n", strings[OPPONENT_WAIT]);
++
++			// Receive attack
++			if (socketRecv(fd, &data, 1) < 0) {
++				printf("Error receiving data\n");
++				break;
++			}
++
++			if (data == OPPONENT_FORFEIT) {
++				forfeit = 1;
++				break;
++			}
++
++			if (data < 0 || data > 15) {
++				printf("Invalid data received\n");
++				break;
++			}
++
++			// Update user grid
++			if (userGrid[data] == BOAT) {
++				printf("%s %X: %s\n", strings[OPPONENT_ATTACK], data, strings[HIT]);
++				userGrid[data] = SUNKEN_BOAT;
++				userBoats--;
++				data = HIT;
++			} else if (userGrid[data] == DEFAULT) {
++				printf("%s %X: %s\n", strings[OPPONENT_ATTACK], data, strings[MISS]);
++				userGrid[data] = MISSED_SHOT;
++				data = MISS;
++			}
++
++			// Send attack result
++			if (socketSend(fd, &data, 1) < 0) {
++				printf("Error sending data\n");
++				break;
++			}
++
++			// Print board
++			printf("%s\n", strings[USER_GRID]);
++			printBoard(userGrid);
++
++			firstIter = 1;
++		}
++
++		// Check the game result
++		if (userBoats == 0) {
++			printf("%s\n", strings[USER_LOST]);
++			break;
++		} else if (advBoats == 0) {
++			printf("%s\n", strings[USER_WON]);
++			break;
++		}
++	}
++
++	// Check forfeit (out of game loop without all user or opponent's boats destroyed)
++	if (forfeit) {
++		printf("%s: %s\n", strings[OPPONENT_FORFEIT], strings[USER_WON]);
++	}
++
++	// Close socket file descriptor
++	close(fd);
++	exit(0);
++	return EXIT_FAILURE;
+ }
+ 
+ 
+-- 
+2.42.1
+
