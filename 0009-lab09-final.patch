@@ -1,0 +1,105 @@
+From e83b757a1527b2d6d5cbb7b986431e6042ea67be Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Mon, 27 Nov 2023 20:54:29 +0100
+Subject: [PATCH] lab09 impl and report
+
+---
+ rapport.md           | 71 ++++++++++++++++++++++++++++++++++++++++++++
+ so3/kernel/process.c |  5 ++--
+ 2 files changed, 74 insertions(+), 2 deletions(-)
+
+diff --git a/rapport.md b/rapport.md
+index e69de29..11b1770 100644
+--- a/rapport.md
++++ b/rapport.md
+@@ -0,0 +1,71 @@
++# SYE - Laboratoire 09
++
++> Lancer l’application `time_loop` en mode continu, en arrière-plan (avec le symbole &) depuis le shell.
++> Essayer d’exécuter des commandes dans le shell. Que se passe-t-il et pourquoi ?
++
++Le processus `time_loop` ne démarre pas immédiatement ; il reste dans l'état "Ready". Comme il est lancé en arrière-plan, le processus shell n'effectue pas de waitpid sur lui. Par conséquent, le shell n'entre jamais dans l'état "Waiting" et reste dans l'état "Running". De plus, comme ils ont les mêmes priorités, l'ordonnanceur ne change pas de contrôle, ce qui signifie qu'il n'y a pas de changement de contexte.
++
++Ceci peut s'affirmer en effectuant un dumpproc après l'exécution du programme `time_loop`:
++
++```
++so3% dumpproc
++********* List of processes **********
++
++ [pid 1 state: RUNNING] [main_tid: 3 name: sh.elf_3]
++ [pid 2 state: READY] [main_tid: 4 name: sh.elf_child_2_4]
++```
++
++Lorsque l'on exécute une autre commande alors que le processus `time_loop` est en arrière-plan, le shell, toujours dans l'état "Running", exécute cette nouvelle commande. Étant donné que `time_loop` et le processus du shell ont les mêmes priorités et que le shell n'attend pas `time_loop` en raison de son état d'arrière-plan, l'ordonnanceur garde le focus sur l'interpréteur de commandes. Par conséquent, `time_loop` n'obtient pas immédiatement de temps processeur et ne produit rien jusqu'à ce que l'ordonnanceur lui alloue les ressources nécessaires, probablement après l'achèvement ou l'interruption de la commande en cours dans l'interpréteur de commandes.
++
++> Changer la priorité du shell pour que le processus `time_loop` devienne plus prioritaire.
++> Essayer d’éxecuter quelques commandes dans le shell.
++
++Après avoir lancé la commande `time_loop` en arrière-plan, le processus `time_loop` entre dans l'état Ready, tandis que le shell reste dans l'état Running. Cependant, la priorité du processus shell a été fixée à un niveau inférieur à la priorité par défaut de tous les threads. Par conséquent, le processus `time_loop` a une priorité plus élevée que le processus shell. 
++
++Comme notre ordonnanceur n'est pas préemptif, nous ne devrions pas constater une exécution de `time_loop` immédiate. Mais, comme le lancement d'un programme avec `execv` lance un changement de contexte, ce qui met le processus du `time_loop` à l'état Running.
++
++Comme `time_loop` dans ce mode utilise une attente active, le processus va s'exécuter jusqu'à la fin de son itération.
++
++> Refaire la manipulation en mode bloquant, toujours en lançant l’application en background.
++
++En mode bloquant, le processus `time_loop` utilise une attente passive, au moyen d'un sleep. Le processus ne sera pas mis à l'état `Waiting`, mais l'appel système engendré par le usleep va provoquer un changement de contexte et l'ordonnanceur pourra placer le processus à l'état `Ready`.
++
++Dans le cas où `time_loop` a une priorité plus faible ou égale à celle du shell, le shell gardera la main en tant que process actif. Ce que nous avons pu constater en plaçant quelques `printk` au niveau du scheduler.
++
++Dans le cas où `time_loop` a une priorité plus élevée que le shell, alors lors du changement de contexte il sera exécuté en priorité et nous constatons grâce à nos `printk` bien placés que le process passe de l'état Ready à Running et Ready à nouveau à chaque itération (c'est-à-dire quand le timer système envoie un signal après la seconde d'attente).
++
++Les résultats de notre analyse se trouvent ici, on constate donc l'inversion du cycle Running -> Ready pour les deux process:
++```
++so3% renice 1 5
++[p:1, n:2] sched prev:1 next:2
++[2] 0
++[p:2, n:1] sched prev:1 next:2
++time_[p:1, n:2] sched prev:1 next:2
++[2] 1
++[p:2, n:1] sched prev:1 next:2
++[p:1, n:2] sched prev:1 next:2
++```
++
++Si on laisse le shell en priorité par défaut, qu'on lance un `time_loop` en mode bloquant en arrière plan. À juste titre il ne s'exécute pas immédiatement, mais si à présent on change la priorité du processus du `time_loop` telle qu'elle soit plus élevée que celle du shell, alors on constate que la `time_loop` commence à s'exécuter.
++
++```
++so3% time_loop b &
++[2] newp state 0
++[1:2] fork p:2 c:0
++[2]
++so3% renice 2 200
++so3% [p:1, n:2] sched prev:1 next:2
++[p:2, n:1] sched prev:1 next:2
++[p:1, n:2] sched prev:1 next:2
++[2] 0
++[p:2, n:1] sched prev:1 next:2
++[p:1, n:2] sched prev:1 next:2
++[2] 1
++```
++
++À première vue, on pourrait penser qu'il s'agit de préemption, notamment par l'absence d'un changement de statut vers l'état `Waiting` comme
++on pourrait se l'imaginer. Mais comme la changement de priorité passe par un appel système, nous avons aussi dans ce cas un changement de contexte.
++
++Comme la priorité du PID 2 est plus élevée lors du passage en mode user, le scheduler va donc passer la main au PID 2 (dans le résultat ci-dessus.)
++Et cela donne la main à notre itération. Nous constatons ensuite le même résultat que quand nous avions configuré la priorité du shell avant de lancer
++la `time_loop`.
+diff --git a/so3/kernel/process.c b/so3/kernel/process.c
+index 9f0834e..9c9e641 100644
+--- a/so3/kernel/process.c
++++ b/so3/kernel/process.c
+@@ -98,8 +98,9 @@ pcb_t *find_proc_by_pid(uint32_t pid) {
+ }
+ 
+ int do_renice(uint32_t pid, uint32_t new_prio) {
+-	//TO COMPLETE
+-
++	pcb_t *pcb = find_proc_by_pid(pid);
++	pcb->main_thread->prio = new_prio;
++	return 0;
+ }
+ 
+ 
+-- 
+2.43.0
+
