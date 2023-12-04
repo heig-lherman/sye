@@ -1,0 +1,89 @@
+From 563b693f2b6a3acd769ad67d6a283128a846b958 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Mon, 4 Dec 2023 20:34:50 +0100
+Subject: [PATCH] feat: impl lab10
+
+---
+ rapport.md           | 36 ++++++++++++++++++++++++++++++++++++
+ so3/arch/arm32/mmu.c |  2 +-
+ usr/src/memory.c     | 11 ++++++++++-
+ 3 files changed, 47 insertions(+), 2 deletions(-)
+
+diff --git a/rapport.md b/rapport.md
+index e69de29..3d53aff 100644
+--- a/rapport.md
++++ b/rapport.md
+@@ -0,0 +1,36 @@
++# Lab10
++
++> Où se trouve le code gérant l’allocation dynamique dans le noyau (gestion du tas) ?
++
++so3/mm/heap.c
++
++> Quel est l’algorithme de gestion mémoire utilisé dans ce contexte ?
++
++Comme précisé dans l'initialisation du heap à la ligne 47, il s'agit de la méthode quick-fit.
++On constate aussi l'initialisation de la quick-list qui correspond aux besoins de cette méthode
++(liste dynamique à deux dimensions).
++
++> Où se trouve le code de la gestion de la MMU ?
++
++L'initialisation et la configuration de la MMU se trouve dans so3/mm/memory.c dans des blocs `#ifdef CONFIG_MMU`.
++
++La MMU est gérée et implémentée par le code se trouvant dans so3/arc/arm32/mmu.c dans notre cas où l'architecture est arm32.
++
++> Que constate-on au niveau des adresses physique et virtuelle ? Pourquoi ?
++
++L'adresse virtuelle ne change pas. Elle reste la même entre tous les appels. Chaque programme a une section de la mémoire
++allouée pour son exécution par la MMU et travaillera donc dans un espace "privé" de la mémoire permettant à l'OS de protéger
++l'espace mémoire des autres programmes en cas d'overflow. Comme l'adresse de départ du heap correspond en général à l'emplacement
++en mémoire après les données venant du fichier objet (.text, .data, .bss) qui sont des données fixes à notre programme, il est
++logique que l'adresse virtuelle reste fixe entre chaque exécution.
++
++L'adresse physique change, mais seulement les premiers bits de l'adresse. 
++Les derniers bits de l'adresse sont l'offset dans la mémoire pour le heap en question,
++on constate donc que ces derniers bits sont les mêmes que pour les derniers bits de l'adresse virtuelle.
++
++Les premiers bits de l'adresse physique eux changent à chaque exécution et correspondent à l'index
++de la page qui devra être traduite par la MMU lors des accès à la mémoire RAM. Quand un nouveau programme est lancé,
++il faudra donc trouver un nouveau bloc mémoire disponible et celui-là n'est pas garanti d'être toujours disponible
++lors du lancement d'un même programme.
++
++
+diff --git a/so3/arch/arm32/mmu.c b/so3/arch/arm32/mmu.c
+index a6205ae..930bc1a 100644
+--- a/so3/arch/arm32/mmu.c
++++ b/so3/arch/arm32/mmu.c
+@@ -640,6 +640,6 @@ addr_t virt_to_phys_pt(addr_t vaddr) {
+ 
+ // LEI: 2021_lab05
+ uint32_t do_translate(uint32_t vaddr) {
+-	return 0; //TO COMPLETE
++	return virt_to_phys_pt(vaddr);
+ }
+ 
+diff --git a/usr/src/memory.c b/usr/src/memory.c
+index 1caa3b6..7a0b3a9 100644
+--- a/usr/src/memory.c
++++ b/usr/src/memory.c
+@@ -7,7 +7,16 @@
+ int main(int argc, char **argv) {
+     uint8_t *buffer;
+ 
+-    // TO COMPLETE
++    // uint8_t = 1 bytes and 4096 bytes = 4KB
++    buffer = (uint8_t *) calloc(4096, sizeof(uint8_t));
++	if (buffer == NULL) {
++		fprintf(stderr, "Error in memory allocation!\n");
++		return EXIT_FAILURE;
++	}
+ 
++	printf("Adresse virtuelle: %p\n", buffer);
++    printf("Adresse physique: %p \n", sys_translate((uint32_t) buffer));
++
++	free(buffer);
+     return EXIT_SUCCESS;
+ }
+-- 
+2.43.0
+
