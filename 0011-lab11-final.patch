@@ -1,0 +1,76 @@
+From aa61945adc662b64b9ca963c8cfa8ac8d906e03c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Mon, 11 Dec 2023 19:05:37 +0100
+Subject: [PATCH] feat: impl lab11
+
+---
+ usr/host/memsim.c | 31 +++++++++++++++++++++++++++----
+ 1 file changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/usr/host/memsim.c b/usr/host/memsim.c
+index 8cd58ef..6444e5a 100644
+--- a/usr/host/memsim.c
++++ b/usr/host/memsim.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include <stdlib.h>
++#include <stdint.h>
+ #include <stdio.h>
+ #include <string.h>
+ 
+@@ -39,8 +40,12 @@ uint8_t main_mem[MEMORY_PAGE_NUM][MEMORY_PAGE_SIZE] = {0};
+  * @return  0 on success, -1 on error.
+  */
+ int virt_to_pte(uint16_t vaddr, uint16_t *pte)
+-{
+-    // TO COMPLETE
++{   
++    uint8_t page_num = (vaddr & 0xFF00) >> 8;
++    if (page_num >= MEMORY_PAGE_NUM)
++        return -1;
++
++    *pte = page_table[page_num];
+ 
+     return 0;
+ }
+@@ -55,8 +60,16 @@ int virt_to_pte(uint16_t vaddr, uint16_t *pte)
+  *          to print an error message
+  */
+ int get_byte(uint16_t vaddr, uint8_t *byte) {
++    uint16_t pte;
++	int rc = virt_to_pte(vaddr, &pte);
++	if (rc < 0) {
++		return -1;
++	}
+ 
+-    // TO COMPLETE
++    uint8_t page_n = (uint8_t) (pte >> 8);
++	uint16_t offs = (uint16_t) (vaddr & 0xFF);
++
++	*byte = main_mem[page_n][offs];
+ 
+     return 0;
+ }
+@@ -71,7 +84,17 @@ int get_byte(uint16_t vaddr, uint8_t *byte) {
+  *          to print an error message
+  */
+ int store_byte(uint16_t vaddr, uint8_t byte) {
+-    // TO COMPLETE 
++    uint16_t pte;
++    int rc = virt_to_pte(vaddr, &pte);
++    if (rc < 0) {
++        return -1;
++    }
++
++    uint8_t page_n = (uint8_t) (pte >> 8);
++    uint16_t offs = (uint16_t) (vaddr & 0xFF);
++
++    main_mem[page_n][offs] = byte;
++
+     return 0;
+ }
+ 
+-- 
+2.43.0
+
