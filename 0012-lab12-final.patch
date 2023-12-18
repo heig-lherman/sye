@@ -1,0 +1,159 @@
+From c25a55a64da2c7976bcac3e298d22a8502ec08ef Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Mon, 18 Dec 2023 20:27:37 +0100
+Subject: [PATCH] feat: impl lab12
+
+---
+ usr/host/memsim.c | 98 ++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 80 insertions(+), 18 deletions(-)
+
+diff --git a/usr/host/memsim.c b/usr/host/memsim.c
+index c6835a9..c992767 100644
+--- a/usr/host/memsim.c
++++ b/usr/host/memsim.c
+@@ -22,12 +22,24 @@
+ #include <stdint.h>
+ 
+ /* Activate memory attributes */
++#define MEMORY_SIZE_SMALL               0
+ #define MEMORY_PTE_ATTRIBUTES_ACTIVE    0
+ 
++#if MEMORY_SIZE_SMALL
++
+ #define MEMORY_PAGE_NUM         256
+ #define MEMORY_PAGE_SIZE        256
++#define PAGE_NUM_SHIFT          8
++#define MASK_OFFSET             0xFF
++
++#else
+ 
+-#define PAGE_NUM_SHIFT 8
++#define MEMORY_PAGE_NUM         64
++#define MEMORY_PAGE_SIZE        1024
++#define PAGE_NUM_SHIFT          10
++#define MASK_OFFSET             0x3FF
++
++#endif
+ 
+ /* Defines for step 3 */
+ #define VALID_BIT       (1 << 0)
+@@ -66,7 +78,11 @@ uint8_t main_mem[MEMORY_PAGE_NUM][MEMORY_PAGE_SIZE] = {0};
+  */
+ int virt_to_pte(uint16_t vaddr, uint16_t *pte)
+ {
+-    *pte = page_table[vaddr >> PAGE_NUM_SHIFT];
++	uint8_t page_num = vaddr >> PAGE_NUM_SHIFT;
++	if (page_num >= MEMORY_PAGE_NUM)
++		return -1;
++
++	*pte = page_table[page_num];
+     return 0;
+ }
+ 
+@@ -80,13 +96,33 @@ int virt_to_pte(uint16_t vaddr, uint16_t *pte)
+  *          to print an error message
+  */
+ int get_byte(uint16_t vaddr, uint8_t *byte) {
++    uint16_t pte;
+ 
+-    uint16_t c_pte;
+-    if (virt_to_pte(vaddr, &c_pte) < 0)
+-    {
++	int rc = virt_to_pte(vaddr, &pte);
++	if (rc < 0) {
++		return -1;
++	}
++ 
++#if MEMORY_PTE_ATTRIBUTES_ACTIVE
++	/* Check pte attributes*/
++	if (((pte & VALID_BIT) >> VALID_POS) == 0) {
++		PAGE_FAULT(vaddr, "invalid page");
++		return -1;
++	}
++
++	uint8_t bits = (pte & RWX_BITS) >> RWX_POS;
++    if (bits == W_PATTERN) {
++        /* Write only */
++        PAGE_FAULT(vaddr, "write-only page");
+         return -1;
+     }
+-    *byte = main_mem[c_pte >> 8][vaddr & 0xFF];
++#endif
++
++    uint8_t page_n = (uint8_t) (pte >> PAGE_NUM_SHIFT);
++	uint16_t offs = (uint16_t) (vaddr & MASK_OFFSET);
++
++	*byte = main_mem[page_n][offs];
++
+     return 0;
+ }
+ 
+@@ -100,12 +136,34 @@ int get_byte(uint16_t vaddr, uint8_t *byte) {
+  *          to print an error message
+  */
+ int store_byte(uint16_t vaddr, uint8_t byte) {
+-    uint16_t c_pte;
+-    if (virt_to_pte(vaddr, &c_pte) < 0)
+-    {
++    uint16_t pte;
++
++    int rc = virt_to_pte(vaddr, &pte);
++    if (rc < 0) {
+         return -1;
+     }
+-    main_mem[c_pte >> 8][vaddr & 0xFF] = byte;
++
++
++#if MEMORY_PTE_ATTRIBUTES_ACTIVE
++	/* Check pte attributes*/
++	if (((pte & VALID_BIT) >> VALID_POS) == 0) {
++		PAGE_FAULT(vaddr, "invalid page");
++		return -1;
++	}
++	
++    uint8_t bits = (pte & RWX_BITS) >> RWX_POS;
++    if (bits == R_PATTERN || bits == X_PATTERN) {
++        /* Read and execute only */
++        PAGE_FAULT(vaddr, "read-only page");
++        return -1;
++    }
++#endif
++
++    uint8_t page_n = (uint8_t) (pte >> PAGE_NUM_SHIFT);
++    uint16_t offs = (uint16_t) (vaddr & MASK_OFFSET);
++
++    main_mem[page_n][offs] = byte;
++
+     return 0;
+ }
+ 
+@@ -228,14 +286,18 @@ void init_page_table(void) {
+         page_table[i] = ((MEMORY_PAGE_NUM -1) - i) << PAGE_NUM_SHIFT;
+ 
+ #if MEMORY_PTE_ATTRIBUTES_ACTIVE
+-        // TO COMPLETE: Make virtual pages 10 to 12 read-only
+-        
+-
+-        // TO COMPLETE: Valid bit
+-        
+-
+-        // TO COMPLETE: Make virtual pages 5 to 8 not valid 
+-
++        /* Make PTE 10 to 12 read-only */
++		if (i >= 10 && i <= 12) {
++			page_table[i] |= (R_PATTERN << RWX_POS);
++		}
++
++		/* Make PTE 5 to 8 not valid */
++		if (i >= 5 && i <= 8) {
++			page_table[i] |= (0 << VALID_POS);
++		} else {
++            // Others are valid
++			page_table[i] |= (1 << VALID_POS);
++		}
+ #endif
+     }
+ 
+-- 
+2.43.0
+
