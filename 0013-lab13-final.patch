@@ -1,0 +1,148 @@
+From f21f40354155233d559d399f66d673be05d20f2c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Tue, 19 Dec 2023 15:20:57 +0100
+Subject: [PATCH] feat: impl lab13
+
+---
+ usr/host/memreplace.c | 100 +++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 88 insertions(+), 12 deletions(-)
+
+diff --git a/usr/host/memreplace.c b/usr/host/memreplace.c
+index d0240cb..3656f59 100644
+--- a/usr/host/memreplace.c
++++ b/usr/host/memreplace.c
+@@ -5,6 +5,8 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <malloc.h>
++#include <stdbool.h>
++#include <stdint.h>
+ 
+ #define RESET        	2
+ #define DELTA        	2
+@@ -24,18 +26,80 @@
+ /* [0] = Valid on 1 bit */
+ uint8_t page_table[NB_PAGES] = {0};
+ 
++// Setup for LRU
++uint8_t g_counter;
++uint8_t counters[NB_PAGES] = {0};
+ 
+-void replaceLRU(void) {
+-    // TO COMPLETE
++// Setup for WSC
++uint16_t tvc = 0;
++uint16_t tdu[NB_PAGES] = {0};
++
++void replaceLRU (void) {
++	int replace_index = -1;
++
++	for (size_t i = 0; i < NB_PAGES; ++i) {
++		if (!(page_table[i] & VALID_BIT_MASK)) {
++            continue;
++        }
++
++		if (replace_index == -1 || counters[i] < counters[replace_index]) {
++            replace_index = i;
++        }
++	}
++
++    if (replace_index == -1) {
++        fprintf(stderr, "Error: no page to replace found\n");
++        exit(1);
++    }
++
++	page_table[replace_index] &= ~VALID_BIT_MASK;
++	page_table[replace_index] |= SWAP_BIT_MASK;
+ }
+ 
+ 
+ void replaceWSC(void) {
+-    // TO COMPLETE
++    int replace_index = -1;
++    for (size_t i = 0; i < NB_PAGES; ++i) {
++        if (!(page_table[i] & VALID_BIT_MASK)) {
++            continue;
++        }
++
++        // Store the index of the first page
++        if (replace_index == -1) {
++            replace_index = i;
++        }
++
++        // If the page is not referenced
++        if (page_table[i] & REF_BIT_MASK) {
++			page_table[i] &= ~REF_BIT_MASK;
++            break;
++		} 
++        
++        if (tvc - tdu[i] > DELTA) {
++			replace_index = i;
++			break;
++		}
++    }
++
++    if (replace_index == -1) {
++        fprintf(stderr, "Error: no page to replace found\n");
++        exit(1);
++    }
++
++    page_table[replace_index] &= ~VALID_BIT_MASK;
++    page_table[replace_index] |= SWAP_BIT_MASK;
+ }
+ 
+ void updateTDU(void) {
+-    // TO COMPLETE
++    for (size_t i = 0; i < NB_PAGES; ++i) {
++        if (!(page_table[i] & VALID_BIT_MASK)) {
++            continue;
++        }
++
++        if (page_table[i] & REF_BIT_MASK) {
++            tdu[i] = tvc;
++        }
++    }
+ }
+ 
+ void init_page_table(void) {
+@@ -119,17 +183,29 @@ int main(int argc, char *argv[]) {
+             if (page_no >= 0 && page_no < NB_PAGES) {
+                 if (LRU_run) {
+                     /* LRU Related */
+-                    if (!(page_table[page_no] & VALID_BIT_MASK)) /* VALID = 0 ? */
+-                        replaceLRU();
+-                    
+-                    // TO COMPLETE
+-                }
++                    if (!(page_table[page_no] & VALID_BIT_MASK)) {
++						replaceLRU();
++						page_table[page_no] &= ~SWAP_BIT_MASK;
++						page_table[page_no] |= VALID_BIT_MASK;
++					}
++
++                    if (page_no >= 0 && page_no < NB_PAGES) {
++                        counters[page_no] = ++g_counter;
++                    }
++                } 
+                 else {
+                     /* WSC Related */
+-                    if (!(page_table[page_no] & VALID_BIT_MASK)) /* VALID = 0 ? */
++                    if (!(page_table[page_no] & VALID_BIT_MASK)) {
++                        /* VALID = 0 ? */
+                         replaceWSC();
+-
+-                    // TO COMPLETE
++                        page_table[page_no] &= ~SWAP_BIT_MASK;
++                    }
++                    
++                    page_table[page_no] |= REF_BIT_MASK;
++                    page_table[page_no] |= VALID_BIT_MASK;
++                    
++                    tvc++;
++                    updateTDU();
+                 }
+ 
+                 print_memory();
+-- 
+2.43.0
+
