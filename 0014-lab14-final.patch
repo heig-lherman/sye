@@ -1,0 +1,166 @@
+From 0c93907d39f20eb6b1a11b8bad8cda3665d667d1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Lo=C3=AFc=20Herman?= <loic@loicherman.ch>
+Date: Sat, 27 Jan 2024 23:59:02 +0100
+Subject: [PATCH] feat: impl lab14
+
+---
+ usr/src/ln.c | 18 +++++++++-
+ usr/src/ls.c | 94 +++++++++++++++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 107 insertions(+), 5 deletions(-)
+
+diff --git a/usr/src/ln.c b/usr/src/ln.c
+index 1bfb131..bc6aba0 100644
+--- a/usr/src/ln.c
++++ b/usr/src/ln.c
+@@ -23,6 +23,22 @@ int main(int argc, char *argv[])
+ 	f_src = argv[1];
+ 	f_dst = argv[2];
+ 
+-	// TO COMPLETE
++	int fd = open(f_src, O_RDONLY);
++	if (fd < 0) {
++		fprintf(stderr, "open() failed!\n");
++		return 1;
++	}
++
++	if (sys_symlink(fd, f_dst) < 0) {
++		fprintf(stderr, "symlink() failed!\n");
++		close(fd);
++		return 1;
++	}
++
++	if (close(fd) < 0) {
++		fprintf(stderr, "close() failed!\n");
++		return 1;
++	}
++
+ 	return 0;
+ }
+diff --git a/usr/src/ls.c b/usr/src/ls.c
+index d58c5d1..5aee6c1 100644
+--- a/usr/src/ls.c
++++ b/usr/src/ls.c
+@@ -37,8 +37,15 @@ char *bytes_to_human_readable(const unsigned long int bytes, char *buf)
+ {
+ 	char *prefix[] = {"", "K", "M", "G", "T"};
+ 
+-	//TO COMPLETE: Convert to human readable format
++	int i = 0;
++	double bytes_f = bytes;
+ 
++	while (bytes_f > 1024) {
++		bytes_f /= 1024;
++		i++;
++	}
++
++	sprintf(buf, "%6.1lf%s", bytes_f, prefix[i]);
+ 	return buf;
+ }
+ 
+@@ -48,7 +55,20 @@ char *attr_to_str(mode_t mod, char *buf)
+ 	buf[0] = '-';
+ 	buf[4] = 0;
+ 
+-	//TO COMPLETE: Interpret mode
++	if (mod & AM_RD)
++		buf[1] = 'r';
++	else
++		buf[1] = '-';
++	
++	if (mod & AM_WR)
++		buf[2] = 'w';
++	else
++		buf[2] = '-';
++	
++	if (mod & AM_EX)
++		buf[3] = 'x';
++	else
++		buf[3] = '-';
+ 
+ 	return buf;
+ }
+@@ -61,13 +81,79 @@ void print_info_file(const char *file, int is_dir, int extended)
+ 	char modes[5];
+ 	struct stat f_stat;
+ 	time_t time;
+-	struct tm tm;
++	struct tm *tm;
+ 
+ 	if (!extended) {
+ 		printf("%s%s\n", file, is_dir ? "/" : "");
+ 
+ 	} else {
+-		//TO COMPLETE: Print extended informations about file
++		// fetch file stats
++		if (stat(file, &f_stat) < 0) {
++			fprintf(stderr, "stat() failed!\n");
++			return;
++		}
++
++		// file attributes
++		attr_to_str(f_stat.st_mode, modes);
++			
++		// file date
++		tm = localtime((const time_t *) &f_stat.st_mtim);
++		snprintf(
++			date, 80,
++			"%d-%d-%d %d:%d",
++		 	tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, 
++			tm->tm_hour, tm->tm_min
++		);
++
++		// is is_dir, update attr
++		if (is_dir) {
++			modes[0] = 'd';
++		}
++
++		// file size
++		bytes_to_human_readable(f_stat.st_size, size);
++
++		// symlink
++		if (f_stat.st_mode & AM_SYM) {
++			modes[0] = 'l';
++
++			int fd = open(file, O_PATH | O_NOFOLLOW);
++			if (fd < 0) {
++				fprintf(stderr, "open() failed!\n");
++				return;
++			}
++
++			char name[80];
++			int n = read(fd, name, 80);
++			if (n < 0) {
++				fprintf(stderr, "read() failed!\n");
++				close(fd);
++				return;
++			}
++
++			name[n] = 0;
++
++			if (close(fd) < 0) {
++				fprintf(stderr, "close() failed!\n");
++				return;
++			}
++
++			// final output
++			printf(
++				"%s | %s | %s | %s -> %s\n",
++				modes, date, size, 
++				file, name
++			);
++
++		} else {
++
++			// final output
++			printf(
++				"%s | %s | %s | %s%s\n",
++				modes, date, size, 
++				file, is_dir ? "/" : ""
++			);
++		}
+ 	}
+ }
+ 
+-- 
+2.43.0
+
